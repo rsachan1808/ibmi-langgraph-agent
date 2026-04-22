@@ -1,0 +1,12 @@
+langchain
+langchain-community
+langchain-anthropic
+langchain-text-splitters
+langchain-classic
+langchain-voyageai
+chromadb
+rank_bm25
+anthropic
+voyageai
+python-dotenv
+langgraph
