@@ -1,0 +1,14 @@
+# API keys and environment files
+.env
+*.env
+
+# Jupyter notebook checkpoints
+.ipynb_checkpoints/
+__pycache__/
+
+# Your actual documentation file — do not upload client/employer docs
+*.txt
+*.pdf
+
+# Chroma database files created at runtime
+chroma_db/

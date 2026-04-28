@@ -160,11 +160,18 @@ Answer: %DATE handles date operations, %PARMS counts parameters...
 [ROUTER] No tool needed → finish
 Answer: The capital of Australia is Canberra...
 
-## What comes next
-Error handling and guardrails — wiring handle_error to catch tool
-failures, API timeouts, and empty responses so every failure mode
-has an explicit path through the graph rather than an unhandled
-exception.
+## Error handling
+
+| Where            | Type          | Action                         |
+|------------------|---------------|--------------------------------|
+| Missing API keys | Configuration | Stop — SystemExit before setup |
+| RAG setup failure | Infrastructure | Stop — SystemExit with message |
+| Anthropic API down | Infrastructure | Stop — route to handle_error |
+| max_tokens hit | Logic | Stop — route to handle_error |
+| Step limit reached | Logic | Stop — route to handle_error |
+| VoyageAI timeout | Recoverable | Log — return message to Claude |
+| Empty RAG result | Data quality | Log — return not found to Claude |
+| Unknown tool | Logic | Log — return message to Claude |
 
 ---
 Built with: Anthropic Claude · LangGraph · LangChain · ChromaDB ·

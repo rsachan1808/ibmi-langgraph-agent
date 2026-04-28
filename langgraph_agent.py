@@ -10,15 +10,35 @@ from dotenv import load_dotenv
 from pathlib import Path
 import os
 from typing import TypedDict
-
 from langgraph.graph import StateGraph, END
 import anthropic
+import logging
+
+# Set up logging for process
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s — %(levelname)s — %(message)s",
+    handlers=[
+        logging.FileHandler("agent.log"),   # writes to file
+        logging.StreamHandler()             # also prints to terminal
+    ]
+)
+logger = logging.getLogger(__name__)
 
 # Load environment
 dotenv_path = Path(__file__).parent / ".env"
 load_dotenv(dotenv_path=dotenv_path)
+ANTHROPIC_KEY = os.environ.get("ANTHROPIC_API_KEY")
+VOYAGE_KEY    = os.environ.get("VOYAGE_API_KEY")
+# ── Step 2: Validate keys BEFORE creating any objects ─────
+if not ANTHROPIC_KEY or not VOYAGE_KEY:
+    raise SystemExit(
+        "API keys not found. Check your .env file.\n"
+        f"ANTHROPIC_API_KEY: {'found' if ANTHROPIC_KEY else 'MISSING'}\n"
+        f"VOYAGE_API_KEY:    {'found' if VOYAGE_KEY else 'MISSING'}"
+    )
 
-client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
 
 print("Loading IBMi documentation...")
 
@@ -32,7 +52,7 @@ splitter = RecursiveCharacterTextSplitter(
 chunks = splitter.split_documents(documents)
 
 embeddings  = VoyageAIEmbeddings(
-    voyage_api_key=os.environ.get("VOYAGE_API_KEY"),
+    voyage_api_key=VOYAGE_KEY,
     model="voyage-3"
 )
 vectorstore = Chroma.from_documents(chunks, embeddings)
@@ -68,6 +88,7 @@ class AgentState(TypedDict):
     final_answer: str        # populated when agent is done
     error:        str        # populated if something goes wrong
     steps:        int        # counts how many tool calls happened
+    stop_reason:  str        # captures reasons for stop   
 
 print("State defined")
 
@@ -108,12 +129,21 @@ print("Tool defined")
 def call_llm(state: AgentState) -> dict:
     print(f"\n[NODE: call_llm] Step {state.get('steps', 0) + 1}")
 
-    response = client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=1024,
-        tools=tools,
-        messages=state["messages"]
-    )
+    try:
+        response = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=1024,
+            tools=tools,
+            messages=state["messages"]
+        )
+    except Exception as e:
+        logger.error(f"Anthropic API error: {type(e).__name__} | {e}")
+        return {
+            "messages": state["messages"],
+            "steps":    state.get("steps", 0) + 1,
+            "stop_reason": "api_error",
+            "error":    f"Anthropic API error: {str(e)}"
+        }
 
     # Serialise ALL blocks to dicts defensively
     content = []
@@ -148,7 +178,9 @@ def call_llm(state: AgentState) -> dict:
         "messages": state["messages"] + [
             {"role": "assistant", "content": content}
         ],
-        "steps": state.get("steps", 0) + 1
+        "steps": state.get("steps", 0) + 1,
+        "stop_reason": response.stop_reason,
+        "error":       ""
     }
 
 # ── Node 2: Execute the tool ──────────────────────────────
@@ -168,7 +200,6 @@ def execute_tool(state: AgentState) -> dict:
 
     # Execute every tool call and collect all results
     tool_results = []
-    last_result  = ""
 
     for tool_use_block in tool_use_blocks:
         tool_name  = tool_use_block["name"]
@@ -178,13 +209,11 @@ def execute_tool(state: AgentState) -> dict:
         print(f"  Tool: {tool_name}")
         print(f"  Input: {tool_input}")
 
-        if tool_name == "get_ibmi_function":
-            result = get_ibmi_function(tool_input["query"])
-        else:
-            result = f"Unknown tool: {tool_name}"
+        # ── Execute with full error handling ─────────────
+        result = execute_single_tool(tool_name, tool_input)
 
         print(f"  Result: {result}")
-        last_result = result
+        logger.info(f"Tool '{tool_name}' | Input: {tool_input} | Result: {result[:100]}")
 
         # Every tool_use block needs a matching tool_result
         tool_results.append({
@@ -203,9 +232,64 @@ def execute_tool(state: AgentState) -> dict:
 
     return {
         "messages":    updated_messages,
-        "tool_result": last_result
+        "tool_result": tool_results[-1]["content"] if tool_results else ""
     }
 
+def execute_single_tool(tool_name: str, tool_input: dict) -> str:
+    """
+    Executes one tool call with full error handling.
+    Always returns a string — never raises an exception.
+    """
+
+    # ── Unknown tool ──────────────────────────────────────
+    if tool_name != "get_ibmi_function":
+        message = f"Unknown tool requested: {tool_name}"
+        logger.warning(message)       # log for later investigation
+        return message                # continue — not a stop error
+
+    # ── Known tool — execute with protection ──────────────
+    query = tool_input.get("query", "")
+
+    if not query:
+        message = "Tool called with empty query"
+        logger.warning(message)
+        return message
+
+    try:
+        # Attempt RAG query
+        result = qa_chain.invoke({"query": query})
+        answer = result["result"]
+
+        # ── Scenario B — empty result ─────────────────────
+        if not answer or answer.strip() == "":
+            message = f"No documentation found for: {query}"
+            logger.info(f"Empty RAG result for query: {query}")
+            return message
+
+        return answer
+
+    # ── Scenario A — infrastructure failure ───────────────
+    except TimeoutError as e:
+        message = f"Documentation search timed out for: {query}"
+        logger.error(f"Timeout in RAG pipeline | Query: {query} | Error: {e}")
+        return message   # return message, do not crash agent
+
+    except ConnectionError as e:
+        message = f"Could not connect to search service for: {query}"
+        logger.error(f"Connection error in RAG pipeline | Query: {query} | Error: {e}")
+        return message
+
+    except Exception as e:
+        # Catch anything else — log full details for debugging
+        message = f"Documentation search failed for: {query}"
+        logger.error(
+            f"Unexpected error in RAG pipeline | "
+            f"Query: {query} | "
+            f"Error type: {type(e).__name__} | "
+            f"Error: {e}"
+        )
+        return message   # always return string, never crash
+    
 # ── Node 3: Finish ────────────────────────────────────────
 def finish(state: AgentState) -> dict:
     print(f"[NODE: finish]")
@@ -249,12 +333,23 @@ print("Nodes defined")
 
 # ── Router — decides what happens after call_llm ─────────
 def route_after_llm(state: AgentState) -> str:
+    
+    # API error — stop immediately
+    if state.get("error"):
+        print("[ROUTER] API error detected → handle_error")
+        return "handle_error"
 
     # Safety limit — prevent infinite loops
     if state.get("steps", 0) >= 10:
         print("[ROUTER] Step limit reached → handle_error")
         return "handle_error"
 
+    # Response cut off — stop and report
+    if state.get("stop_reason") == "max_tokens":
+        print("[ROUTER] Response cut off at max_tokens → handle_error")
+        logger.warning(f"Response truncated at step {state.get('steps')}")
+        return "handle_error"
+    
     # Get last assistant message
     last_message = state["messages"][-1]
 
@@ -328,5 +423,5 @@ def ask_agent(question: str) -> str:
     return result["final_answer"]
 
 # Test
-answer = ask_agent("type your question here")
+answer = ask_agent("What is the difference between %DATE and %PARMS in IBMi?")
 print(f"\nFinal answer: {answer}")
