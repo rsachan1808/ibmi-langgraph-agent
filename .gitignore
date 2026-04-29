@@ -12,3 +12,7 @@ __pycache__/
 
 # Chroma database files created at runtime
 chroma_db/
+
+# Evaluation results and agent logs 
+evaluation_results.json
+agent.log

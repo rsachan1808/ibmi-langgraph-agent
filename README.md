@@ -173,6 +173,36 @@ Answer: The capital of Australia is Canberra...
 | Empty RAG result | Data quality | Log — return not found to Claude |
 | Unknown tool | Logic | Log — return message to Claude |
 
+## Evaluation
+
+The agent includes an automated evaluation framework that runs 
+after any change to measure answer quality.
+
+Two evaluation methods per test case:
+- **Keyword check** — verifies required terms are present and 
+  no hallucinated terms appear. Fast, free, catches missing 
+  function names.
+- **LLM judge** — Claude evaluates correctness and completeness 
+  against an ideal answer. Catches subtle factual errors that 
+  keyword matching misses.
+
+Both must pass for a test to be considered passing.
+
+**Run evaluation:**
+```bash
+python evaluate_agent.py
+```
+
+**First run results: 3/4 tests passing**
+- %DATE ✅ — correct and complete
+- %PARMS ✅ — correct and complete  
+- %LEN ❌ — missing array and data structure coverage
+- Australia capital ✅ — correct
+
+The %LEN failure identified a genuine documentation gap —
+the source documentation does not cover array and data 
+structure usage which are primary IBMi use cases.
+
 ---
 Built with: Anthropic Claude · LangGraph · LangChain · ChromaDB ·
 VoyageAI Embeddings · BM25 · Python

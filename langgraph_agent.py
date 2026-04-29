@@ -6,13 +6,11 @@ from langchain_classic.chains import RetrievalQA
 from langchain_voyageai import VoyageAIEmbeddings
 from langchain_community.retrievers import BM25Retriever
 from langchain_classic.retrievers import EnsembleRetriever
-from dotenv import load_dotenv
-from pathlib import Path
-import os
 from typing import TypedDict
 from langgraph.graph import StateGraph, END
 import anthropic
 import logging
+from config import load_keys
 
 # Set up logging for process
 logging.basicConfig(
@@ -25,18 +23,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Load environment
-dotenv_path = Path(__file__).parent / ".env"
-load_dotenv(dotenv_path=dotenv_path)
-ANTHROPIC_KEY = os.environ.get("ANTHROPIC_API_KEY")
-VOYAGE_KEY    = os.environ.get("VOYAGE_API_KEY")
-# ── Step 2: Validate keys BEFORE creating any objects ─────
-if not ANTHROPIC_KEY or not VOYAGE_KEY:
-    raise SystemExit(
-        "API keys not found. Check your .env file.\n"
-        f"ANTHROPIC_API_KEY: {'found' if ANTHROPIC_KEY else 'MISSING'}\n"
-        f"VOYAGE_API_KEY:    {'found' if VOYAGE_KEY else 'MISSING'}"
-    )
+# Load API keys from config 
+ANTHROPIC_KEY, VOYAGE_KEY = load_keys()
 
 client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
 
@@ -68,7 +56,7 @@ ensemble_retriever = EnsembleRetriever(
 
 rag_llm  = ChatAnthropic(
     model="claude-haiku-4-5-20251001",
-    anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY")
+    anthropic_api_key=ANTHROPIC_KEY
 )
 qa_chain = RetrievalQA.from_chain_type(
     llm=rag_llm,
