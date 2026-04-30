@@ -30,7 +30,7 @@ client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
 
 print("Loading IBMi documentation...")
 
-loader    = TextLoader("RPG_test.txt")
+loader    = TextLoader("ibmi_docs.txt")
 documents = loader.load()
 
 splitter = RecursiveCharacterTextSplitter(

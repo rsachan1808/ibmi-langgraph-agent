@@ -5,9 +5,10 @@
 # Jupyter notebook checkpoints
 .ipynb_checkpoints/
 __pycache__/
+*.pyc
 
 # Your actual documentation file — do not upload client/employer docs
-*.txt
+ibmi_docs.txt
 *.pdf
 
 # Chroma database files created at runtime
@@ -15,4 +16,5 @@ chroma_db/
 
 # Evaluation results and agent logs 
 evaluation_results.json
-agent.log
+*.log
+.git/
